@@ -94,25 +94,3 @@ class RMHFile:
     def indexed_sentence_text(self):
         for sentence in self.sentences:
             yield sentence.index, " ".join([token.text for token in sentence.tokens])
-
-    def write_to_disk(self, directory, write_desc=False):
-        raise NotImplementedError
-        # _TMP_DIR = Path("/tmp/rmh")
-        # os.makedirs(_TMP_DIR, exist_ok=True)
-        # tid = threading.get_ident()
-        # pid = os.getpid()
-
-        # tsv_tmp = _TMP_DIR / f"tsv-{pid}-{tid}.tmp"
-        # with open(tsv_tmp, "w") as file_handle:
-        #     for (tokens, lemmas, tags) in self.as_tuples():
-        #         file_handle.write("\t".join([tokens, lemmas, tags]))
-        #         file_handle.write("\n")
-
-        # desc_tmp = _TMP_DIR / f"desc-{pid}-{tid}.tmp"
-        # tree = ET.ElementTree(element=self.file_desc)
-        # tree.write(desc_tmp, encoding="utf-8", xml_declaration=True)
-
-        # tsv_path = (Path(directory) / self.idno).with_suffix(".tsv")
-        # desc_path = (Path(directory) / self.idno).with_suffix(".desc.xml")
-        # shutil.move(desc_tmp, desc_path)
-        # shutil.move(tsv_tmp, tsv_path)
