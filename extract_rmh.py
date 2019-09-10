@@ -1,18 +1,32 @@
 #!/usr/bin/env python3
-# coding: utf-8
+"""
+Reynir: Natural language processing for Icelandic
+
+ RMH Converter
+
+Copyright (C) 2019 Miðeind ehf.
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see http://www.gnu.org/licenses/.
+
+ Extraction and conversion utility for the RMH corpus
+
+"""
 
 import zipfile
 from pathlib import Path
 import traceback
 import rmhfile
 
-# SCRIPT_DIR = Path(os.path.dirname(os.path.realpath("__file__")))
-# OUTPUT_DIR = SCRIPT_DIR / "uncompress_data"
-# os.makedirs(OUTPUT_DIR, exist_ok=True)
-
-# p1 = Path("rmh1.zip")
-# p2 = Path("rmh2.zip")
-# p = Path("/home/haukur/Downloads/wordsim353.zip")
 
 DEFAULT_EXPORT_DIR = Path("./extracted")
 DEFAULT_OUTPUT_NAME = "output.tsv"
