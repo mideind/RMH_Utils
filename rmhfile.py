@@ -25,10 +25,12 @@ along with this program.  If not, see http://www.gnu.org/licenses/.
 import xml.etree.cElementTree as ET
 from collections import namedtuple
 from pathlib import Path
+import urllib.parse as urlparse
 
 
 URI = "http://www.tei-c.org/ns/1.0"
-NAMESPACE = "{" + URI + "}"
+TEI = "{" + URI + "}"
+NS = {"tei": URI}
 ET.register_namespace("", URI)
 
 Sentence = namedtuple("Sentence", "index tokens")
@@ -36,6 +38,8 @@ Token = namedtuple("Token", "text, lemma, tag")
 
 
 class RMHFile:
+    """An xml file that is part of the RMH corpus"""
+
     def __init__(self, path):
         self.path = path if isinstance(path, Path) else Path(path)
         self._root = None
@@ -64,28 +68,41 @@ class RMHFile:
     def header(self):
         if self._header is not None:
             return self._header
-        self._header = self.root.find(f"{NAMESPACE}teiHeader")
+        self._header = self.root.find(".//tei:teiHeader", NS)
         return self._header
 
     @property
     def idno(self):
         if self._idno is not None:
             return self._idno
-        idno_elem = list(self.root.iter(f"{NAMESPACE}idno"))
-        self._idno = idno_elem[0].text if idno_elem else None
+        idno_elem = self.root.find(".//tei:idno", NS)
+        if idno_elem is None:
+            return None
+        self._idno = idno_elem.text
         return self._idno
 
     @property
-    def source_desc(self):
-        if self._source_desc is not None:
-            return self._source_desc
-        self._source_desc = self.header.find(f"{NAMESPACE}sourceDesc")
-        return self._source_desc
+    def paragraphs(self):
+        for pg in self.root.iterfind(f".//tei:div1/tei:p", NS):
+            yield pg
 
     @property
-    def paragraphs(self):
-        for pg in self.root.iterfind(f".//{NAMESPACE}div1/{NAMESPACE}p"):
-            yield pg
+    def ref(self):
+        el = self.header.find(".//tei:biblScope/tei:ref", NS)
+        if el is not None:
+            return el.text
+        return None
+
+    @property
+    def is_sports(self):
+        if self.ref is None:
+            return None
+        res = urlparse.urlparse(self.ref)
+        prefix = "/sport"
+        infix = "/pepsi-deild/"
+        items = self.header.iter(".//tei:keyWords/tei:list/tei:item")  # rmh2018/433/12/G-39-5740489
+        found = any("Fótbolti" in item.text for item in items)
+        return res.path.startswith(prefix) or infix in res.path or found
 
     def __fspath__(self):
         return str(self.path)
@@ -102,7 +119,7 @@ class RMHFile:
         idno = self.idno
         for pg in self.paragraphs:
             pg_idx = pg.attrib.get("n")
-            for sentence in pg.iterfind(f"{NAMESPACE}s"):
+            for sentence in pg.iterfind("tei:s", NS):
                 sent_idx = sentence.attrib.get("n")
                 tokens = []
                 for item in sentence:

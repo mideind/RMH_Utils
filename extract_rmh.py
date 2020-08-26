@@ -4,7 +4,7 @@ Reynir: Natural language processing for Icelandic
 
  RMH Converter
 
-Copyright (C) 2019 Miðeind ehf.
+Copyright (C) 2020 Miðeind ehf.
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -34,7 +34,7 @@ FLATTEN_DEPTH = 3
 MAX_BUFFER_SIZE = 10 ** 6  # lines
 
 
-def extract_all(in_path=None, out_path=None):
+def extract_all(in_path=None, out_path=None, include_sports=True):
     base_out_path = out_path
     base_out_path.mkdir(exist_ok=True, parents=True)
     last_out_path = None
@@ -64,6 +64,8 @@ def extract_all(in_path=None, out_path=None):
             try:
                 with archive.open(str(item_path)) as item:
                     rmhf = rmhfile.RMHFile.fromstring(item.read())
+                    if not include_sports and rmhf.is_sports:
+                        continue
                     new_data = [fields for fields in rmhf.indexed_sentence_text()]
             except KeyboardInterrupt:
                 return
@@ -71,16 +73,28 @@ def extract_all(in_path=None, out_path=None):
                 new_data = []
                 print("Skipping:", item_name)
                 traceback.print_exc()
+                continue
 
             try:
-                if out_path == last_out_path and len(buf) < MAX_BUFFER_SIZE:
+                if last_out_path is None:
+                    last_out_path = out_path
+                if out_path == last_out_path and len(buf) <= MAX_BUFFER_SIZE:
                     buf.extend(new_data)
-                elif len(buf) > 0:
-                    with out_path.open(mode="a") as out_file:
+                elif out_path == last_out_path and len(buf) > MAX_BUFFER_SIZE:
+                    with last_out_path.open(mode="a") as out_file:
+                        buf.extend(new_data)
                         for fields in buf:
                             out_file.write("\t".join(fields))
                             out_file.write("\n")
                         buf = []
+                elif buf:
+                    with last_out_path.open(mode="a") as out_file:
+                        for fields in buf:
+                            out_file.write("\t".join(fields))
+                            out_file.write("\n")
+                        buf = []
+                    buf.extend(new_data)
+                else:
                     buf.extend(new_data)
             except KeyboardInterrupt:
                 return
@@ -90,6 +104,12 @@ def extract_all(in_path=None, out_path=None):
                 traceback.print_exc()
 
             last_out_path = out_path
+        if buf:
+            with last_out_path.open(mode="a") as out_file:
+                for fields in buf:
+                    out_file.write("\t".join(fields))
+                    out_file.write("\n")
+                buf = []
 
 
 if __name__ == "__main__":
@@ -101,7 +121,7 @@ if __name__ == "__main__":
         path = Path(path)
         if path.is_file():
             return path
-        raise argparse.ArgumentError(
+        raise ValueError(
             "Expected path to a file but got '{0}'".format(path)
         )
 
@@ -123,8 +143,14 @@ if __name__ == "__main__":
         default=DEFAULT_EXPORT_DIR,
         help="Path to output file",
     )
+    parser.add_argument(
+        "--no-sports",
+        dest="sports",
+        action="store_true",
+        help="Path to output file",
+    )
 
     args = parser.parse_args()
     args.out_path.mkdir(exist_ok=True, parents=True)
 
-    extract_all(in_path=args.in_path, out_path=args.out_path)
+    extract_all(in_path=args.in_path, out_path=args.out_path, include_sports=not args.sports)
