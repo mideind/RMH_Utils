@@ -51,6 +51,8 @@ class RMHFile:
     def fromstring(cls, data):
         inst = cls("")
         inst._root = ET.fromstring(data)
+        if inst.idno is None:
+            return None
         inst.path = Path(inst.idno)
         inst.tsv_fname = inst.path.with_suffix(".tsv")
         inst.desc_fname = inst.path.with_suffix(".desc.xml")
@@ -88,6 +90,8 @@ class RMHFile:
 
     @property
     def ref(self):
+        if self.header is None:
+            return None
         el = self.header.find(".//tei:biblScope/tei:ref", NS)
         if el is not None:
             return el.text

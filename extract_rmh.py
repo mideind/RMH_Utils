@@ -27,6 +27,13 @@ from pathlib import Path
 import traceback
 import rmhfile
 
+try:
+    from icecream import ic
+    ic.configureOutput(includeContext=True)
+except ImportError:  # Graceful fallback if IceCream isn't installed.
+    ic = lambda *a: None if not a else (a[0] if len(a) == 1 else a)  # noqa
+
+from tqdm import tqdm
 
 DEFAULT_EXPORT_DIR = Path("./extracted")
 DEFAULT_OUTPUT_NAME = "output.tsv"
@@ -40,8 +47,9 @@ def extract_all(in_path=None, out_path=None, include_sports=True):
     last_out_path = None
 
     buf = []
+    ic()
     with zipfile.ZipFile(str(in_path)) as archive:
-        for item_name in archive.namelist():
+        for item_name in tqdm(archive.namelist()):
             if not item_name:
                 continue
             item_path = Path(item_name)
@@ -63,17 +71,26 @@ def extract_all(in_path=None, out_path=None, include_sports=True):
             new_data = []
             try:
                 with archive.open(str(item_path)) as item:
-                    rmhf = rmhfile.RMHFile.fromstring(item.read())
+                    if not item:
+                        import pdb; pdb.set_trace()
+                        ic()
+                    text = item.read()
+                    if not text:
+                        import pdb; pdb.set_trace()
+                        ic()
+                    rmhf = rmhfile.RMHFile.fromstring(text)
+                    if not rmhf:
+                        continue
                     if not include_sports and rmhf.is_sports:
                         continue
                     new_data = [fields for fields in rmhf.indexed_sentence_text()]
             except KeyboardInterrupt:
                 return
-            except Exception:
-                new_data = []
-                print("Skipping:", item_name)
-                traceback.print_exc()
-                continue
+            # except Exception:
+            #     new_data = []
+            #     print("Skipping:", item_name)
+            #     traceback.print_exc()
+            #     continue
 
             try:
                 if last_out_path is None:
