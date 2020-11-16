@@ -41,7 +41,7 @@ FLATTEN_DEPTH = 3
 MAX_BUFFER_SIZE = 10 ** 6  # lines
 
 
-def extract_all(in_path=None, out_path=None, include_sports=True):
+def extract_all(in_path=None, out_path=None, include_sports=True, include_meta=True):
     base_out_path = out_path
     base_out_path.mkdir(exist_ok=True, parents=True)
     last_out_path = None
@@ -78,12 +78,23 @@ def extract_all(in_path=None, out_path=None, include_sports=True):
                     if not text:
                         import pdb; pdb.set_trace()
                         ic()
-                    rmhf = rmhfile.RMHFile.fromstring(text)
+                    try:
+                        rmhf = rmhfile.RMHFile.fromstring(text)
+                    except:
+                        print("File {} broken, skipping".format(item_path))
+                        continue
                     if not rmhf:
                         continue
                     if not include_sports and rmhf.is_sports:
                         continue
-                    new_data = [fields for fields in rmhf.indexed_sentence_text()]
+                    if rmhf.ref is None:
+                        ref = ""
+                    else:
+                        ref = rmhf.ref
+                    meta_data = []
+                    if include_meta:
+                        meta_data = [rmhf.title, rmhf.author, ref, rmhf.date]
+                    new_data = [meta_data + list(fields) for fields in rmhf.indexed_sentence_text()]
             except KeyboardInterrupt:
                 return
             # except Exception:
@@ -164,10 +175,16 @@ if __name__ == "__main__":
         "--no-sports",
         dest="sports",
         action="store_true",
-        help="Path to output file",
+        help="Ignore sports",
+    )
+    parser.add_argument(
+        "--no-meta",
+        dest="no_meta",
+        action="store_true",
+        help="Don't print file name, author, url and date in tsv"
     )
 
     args = parser.parse_args()
     args.out_path.mkdir(exist_ok=True, parents=True)
 
-    extract_all(in_path=args.in_path, out_path=args.out_path, include_sports=not args.sports)
+    extract_all(in_path=args.in_path, out_path=args.out_path, include_sports=not args.sports, include_meta=not args.no_meta)

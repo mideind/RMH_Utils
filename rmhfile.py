@@ -46,6 +46,9 @@ class RMHFile:
         self._header = None
         self._source_desc = None
         self._idno = None
+        self._title = None 
+        self._author = None
+        self._date = None
 
     @classmethod
     def fromstring(cls, data):
@@ -72,6 +75,45 @@ class RMHFile:
             return self._header
         self._header = self.root.find(".//tei:teiHeader", NS)
         return self._header
+
+    @property
+    def author(self):
+        if self._author is not None:
+            return self._author
+        header = self.header
+        text = ""
+        if header is not None:
+            author_elem = header.find(".//tei:biblStruct/tei:analytic/tei:author", NS)
+            if author_elem is not None and author_elem.text is not None:
+                text = author_elem.text
+        self._author = text
+        return self._author
+
+    @property
+    def date(self):
+        if self._date is not None:
+            return self._date
+        header = self.header
+        text = ""
+        if header is not None:
+            date_elem = header.find(".//tei:biblStruct/tei:analytic/tei:date", NS)
+            if date_elem is not None:
+               text = date_elem.text
+        self._date = text
+        return self._date
+
+    @property
+    def title(self):
+        if self._title is not None:
+            return self._title
+        header = self.header
+        text = ""
+        if header is not None:
+            title_elem = header.find(".//tei:biblStruct/tei:analytic/tei:title/tei:title", NS)
+            if title_elem is not None:
+                return title_elem.text
+        self._title = text
+        return self._title
 
     @property
     def idno(self):
