@@ -22,6 +22,7 @@
 """
 
 
+from argparse import FileType
 import zipfile
 from pathlib import Path
 import traceback
@@ -53,11 +54,13 @@ def extract_all(in_path=None, out_path=None, include_sports=True, include_meta=T
             if not item_name:
                 continue
             item_path = Path(item_name)
-
             if ".xml" not in item_path.suffixes:
                 continue
             path_parents = list(reversed(item_path.parents))
-
+            if ".ana" in item_path.suffixes:
+                file_type = "ana"
+            else:
+                file_type = "tei"
             out_fname = DEFAULT_OUTPUT_NAME
             condensed_rel_path = path_parents[-1]
             if len(path_parents) > FLATTEN_DEPTH:
@@ -79,7 +82,8 @@ def extract_all(in_path=None, out_path=None, include_sports=True, include_meta=T
                         import pdb; pdb.set_trace()
                         ic()
                     try:
-                        rmhf = rmhfile.RMHFile.fromstring(text)
+                        rmhf = rmhfile.RMHFile.fromstring(text, file_type)
+                        print(rmhf)
                     except:
                         print("File {} broken, skipping".format(item_path))
                         continue
@@ -94,15 +98,12 @@ def extract_all(in_path=None, out_path=None, include_sports=True, include_meta=T
                     meta_data = []
                     if include_meta:
                         meta_data = [rmhf.title, rmhf.author, ref, rmhf.date]
-                    new_data = [meta_data + list(fields) for fields in rmhf.indexed_sentence_text()]
+                    if file_type == "tei":
+                        new_data = [meta_data + list(fields[1]) for fields in rmhf.indexed_sentence_text()]
+                    elif file_type == "ana":
+                        new_data = [meta_data + list(fields) for fields in rmhf.indexed_sentence_text()]
             except KeyboardInterrupt:
                 return
-            # except Exception:
-            #     new_data = []
-            #     print("Skipping:", item_name)
-            #     traceback.print_exc()
-            #     continue
-
             try:
                 if last_out_path is None:
                     last_out_path = out_path
@@ -124,6 +125,7 @@ def extract_all(in_path=None, out_path=None, include_sports=True, include_meta=T
                     buf.extend(new_data)
                 else:
                     buf.extend(new_data)
+                #print(new_data)
             except KeyboardInterrupt:
                 return
             except Exception:
@@ -132,12 +134,12 @@ def extract_all(in_path=None, out_path=None, include_sports=True, include_meta=T
                 traceback.print_exc()
 
             last_out_path = out_path
-        if buf:
-            with last_out_path.open(mode="a") as out_file:
-                for fields in buf:
-                    out_file.write("\t".join(fields))
-                    out_file.write("\n")
-                buf = []
+            if buf:
+                with last_out_path.open(mode="a") as out_file:
+                    for fields in buf:
+                        out_file.write("\t".join(fields))
+                        out_file.write("\n")
+                    buf = []
 
 
 if __name__ == "__main__":

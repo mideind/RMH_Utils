@@ -22,11 +22,12 @@
 """
 
 
+from posixpath import split
 import xml.etree.cElementTree as ET
 from collections import namedtuple
 from pathlib import Path
 import urllib.parse as urlparse
-
+import tokenizer
 
 URI = "http://www.tei-c.org/ns/1.0"
 TEI = "{" + URI + "}"
@@ -34,8 +35,8 @@ NS = {"tei": URI}
 ET.register_namespace("", URI)
 
 Sentence = namedtuple("Sentence", "index tokens")
-Token = namedtuple("Token", "text, lemma, tag")
-
+Token = namedtuple("Token", "text, lemma, tag, id")
+UntokSentence = namedtuple("UntokSentence", "sentence")
 
 class RMHFile:
     """An xml file that is part of the RMH corpus"""
@@ -43,6 +44,7 @@ class RMHFile:
     def __init__(self, path):
         self.path = path if isinstance(path, Path) else Path(path)
         self._root = None
+        self._type = None
         self._header = None
         self._source_desc = None
         self._idno = None
@@ -51,9 +53,10 @@ class RMHFile:
         self._date = None
 
     @classmethod
-    def fromstring(cls, data):
+    def fromstring(cls, data, type="ana"):
         inst = cls("")
         inst._root = ET.fromstring(data)
+        inst._type = type
         if inst.idno is None:
             return None
         inst.path = Path(inst.idno)
@@ -98,7 +101,7 @@ class RMHFile:
         if header is not None:
             date_elem = header.find(".//tei:biblStruct/tei:analytic/tei:date", NS)
             if date_elem is not None:
-               text = date_elem.text
+                text = date_elem.text
         self._date = text
         return self._date
 
@@ -109,7 +112,7 @@ class RMHFile:
         header = self.header
         text = ""
         if header is not None:
-            title_elem = header.find(".//tei:biblStruct/tei:analytic/tei:title/tei:title", NS)
+            title_elem = header.find(".//tei:biblStruct/tei:analytic/tei:title", NS)
             if title_elem is not None:
                 return title_elem.text
         self._title = text
@@ -127,7 +130,7 @@ class RMHFile:
 
     @property
     def paragraphs(self):
-        for pg in self.root.iterfind(f".//tei:div1/tei:p", NS):
+        for pg in self.root.iterfind(f".//tei:div/tei:p", NS):
             yield pg
 
     @property
@@ -160,9 +163,23 @@ class RMHFile:
             return True
         return False
 
+
+    @property
+    def sentences_from_paragraphs(self):
+        idno = self._idno
+        for pg in self.paragraphs:
+            pg_idx = pg.attrib.get("id")
+            sentences = self.split_sentences(pg.text)
+            sent_idx = 0
+            for sentence in sentences:
+                sent_id = f"{idno}"#.{pg_idx}.{sent_idx}"
+                sent_idx += 1
+                yield UntokSentence(sentence.strip())
+
+
     @property
     def sentences(self):
-        idno = self.idno
+        idno = self._idno
         for pg in self.paragraphs:
             pg_idx = pg.attrib.get("n")
             for sentence in pg.iterfind("tei:s", NS):
@@ -172,12 +189,21 @@ class RMHFile:
                     token = Token(
                         item.text,
                         item.attrib.get("lemma", item.text),
-                        item.attrib.get("type", item.text),
+                        item.attrib.get("pos", item.text),
+                        item.attrib.get("xml:id", item.text),
                     )
                     tokens.append(token)
-                sent_id = f"{idno}.{pg_idx}.{sent_idx}"
-                yield Sentence(sent_id, tokens)
+                    print(token)
+                sent_id = f"{idno}"#.{pg_idx}.{sent_idx}"
+                yield Sentence(sent_id, tokens) 
+
+    def split_sentences(self, paragraph):
+        return tokenizer.split_into_sentences(paragraph, original=True)
 
     def indexed_sentence_text(self):
-        for sentence in self.sentences:
-            yield sentence.index, " ".join([token.text for token in sentence.tokens])
+        if self._type == "ana":
+            for sentence in self.sentences:
+                yield sentence.index, " ".join([token.text for token in sentence.tokens])
+        elif self._type == "tei":
+            for sentence in self.sentences_from_paragraphs:
+               yield sentence.index, sentence
