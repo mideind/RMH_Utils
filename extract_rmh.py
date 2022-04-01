@@ -22,136 +22,131 @@
 """
 
 
+import logging
 import zipfile
+from collections import defaultdict
+from multiprocessing import Pool
 from pathlib import Path
-import traceback
-import rmhfile
-
-try:
-    from icecream import ic
-    ic.configureOutput(includeContext=True)
-except ImportError:  # Graceful fallback if IceCream isn't installed.
-    ic = lambda *a: None if not a else (a[0] if len(a) == 1 else a)  # noqa
+from typing import Dict, List
 
 from tqdm import tqdm
 
-DEFAULT_EXPORT_DIR = Path("./extracted")
-DEFAULT_OUTPUT_NAME = "output.tsv"
-FLATTEN_DEPTH = 3
-MAX_BUFFER_SIZE = 10 ** 6  # lines
+import rmhfile
+from combine_text import split_sentences
+
+DEFAULT_EXPORT_DIR = Path("./extracted_rmh")
+DEFAULT_FLATTEN_DEPTH = 0
 
 
-def extract_all(in_path=None, out_path=None, include_sports=True, include_meta=True):
-    base_out_path = out_path
-    base_out_path.mkdir(exist_ok=True, parents=True)
-    last_out_path = None
+def archive_path_to_outpath(
+    archive_paths: List[Path],
+    out_path: Path,
+    flatten_depth: int,
+    accepted_suffixes: List[str],
+    output_file_suffix=".txt",
+) -> Dict[Path, Path]:
+    """Traverse the namelist and assign each element to an output file.
+    If the depth of an element to more than the flatten_depth, it is aggregated to parent's output file."""
+    archive_paths = list(
+        filter(lambda x: accepted_suffixes == x.suffixes, archive_paths)
+    )
+    potential_namelist = [
+        list(reversed(x.parents))[1:] + [x] for x in archive_paths
+    ]  # Skip the "." and add the file itself
+    output_names = [
+        out_path / x[min(flatten_depth, len(x) - 1)] for x in potential_namelist
+    ]
+    output_names_with_suffix = [x.with_suffix(output_file_suffix) for x in output_names]
+    namelist_mapping = {
+        archive_paths[i]: output_names_with_suffix[i] for i in range(len(archive_paths))
+    }
+    return namelist_mapping
 
-    buf = []
-    ic()
-    with zipfile.ZipFile(str(in_path)) as archive:
-        for item_name in tqdm(archive.namelist()):
-            if not item_name:
-                continue
-            item_path = Path(item_name)
 
-            if ".xml" not in item_path.suffixes:
-                continue
-            path_parents = list(reversed(item_path.parents))
+def extract_rmh_to_txt(
+    rmhf: rmhfile.RMHFile,
+    sentence_separator="\n",
+    document_separator="\n",
+    paragraph_separator="\n",
+) -> str:
+    """Extract a single RMHFile to a text file"""
+    return (
+        paragraph_separator.join(  # Join paragraphs
+            [
+                sentence_separator.join(  # Join sentences into paragraphs again.
+                    map(
+                        lambda x: x
+                        if x[0] != " "
+                        else x[
+                            1:
+                        ],  # Remove the space at the beginning of consecutive sentences
+                        split_sentences(paragraph),
+                    )
+                )
+                for paragraph in rmhf.paragraphs()
+            ]
+        )
+        + document_separator  # Add a document separator
+    )
 
-            out_fname = DEFAULT_OUTPUT_NAME
-            condensed_rel_path = path_parents[-1]
-            if len(path_parents) > FLATTEN_DEPTH:
-                condensed_rel_path = path_parents[FLATTEN_DEPTH].parent
-                out_fname = Path(path_parents[FLATTEN_DEPTH].name).with_suffix(".tsv")
 
-            out_path_parent = base_out_path / condensed_rel_path
-            out_path_parent.mkdir(exist_ok=True, parents=True)
-            out_path = out_path_parent / out_fname
+def extract_all(
+    zip_file_path: Path,
+    out_path: Path,
+    flatten_depth: int,
+    accepted_suffixes: List[str],
+    processes: int,
+    chunksize: int,
+) -> None:
+    # Please note that the zipfile module is not thread-safe even though it should be: https://bugs.python.org/issue42369
+    with zipfile.ZipFile(str(zip_file_path)) as archive:
+        archive_paths = [Path(x) for x in archive.namelist()]
+        namelist_to_outpath_mapping = archive_path_to_outpath(
+            archive_paths, out_path, flatten_depth, accepted_suffixes
+        )
+        outpath_to_namelist = defaultdict(list)
+        for archive_path, outpath in namelist_to_outpath_mapping.items():
+            outpath_to_namelist[outpath].append(archive_path)
 
-            new_data = []
-            try:
-                with archive.open(str(item_path)) as item:
-                    if not item:
-                        import pdb; pdb.set_trace()
-                        ic()
-                    text = item.read()
-                    if not text:
-                        import pdb; pdb.set_trace()
-                        ic()
-                    try:
-                        rmhf = rmhfile.RMHFile.fromstring(text)
-                    except:
-                        print("File {} broken, skipping".format(item_path))
-                        continue
-                    if not rmhf:
-                        continue
-                    if not include_sports and rmhf.is_sports:
-                        continue
-                    if rmhf.ref is None:
-                        ref = ""
-                    else:
-                        ref = rmhf.ref
-                    meta_data = []
-                    if include_meta:
-                        meta_data = [rmhf.title, rmhf.author, ref, rmhf.date]
-                    new_data = [meta_data + list(fields) for fields in rmhf.indexed_sentence_text()]
-            except KeyboardInterrupt:
-                return
-            # except Exception:
-            #     new_data = []
-            #     print("Skipping:", item_name)
-            #     traceback.print_exc()
-            #     continue
-
-            try:
-                if last_out_path is None:
-                    last_out_path = out_path
-                if out_path == last_out_path and len(buf) <= MAX_BUFFER_SIZE:
-                    buf.extend(new_data)
-                elif out_path == last_out_path and len(buf) > MAX_BUFFER_SIZE:
-                    with last_out_path.open(mode="a") as out_file:
-                        buf.extend(new_data)
-                        for fields in buf:
-                            out_file.write("\t".join(fields))
-                            out_file.write("\n")
-                        buf = []
-                elif buf:
-                    with last_out_path.open(mode="a") as out_file:
-                        for fields in buf:
-                            out_file.write("\t".join(fields))
-                            out_file.write("\n")
-                        buf = []
-                    buf.extend(new_data)
-                else:
-                    buf.extend(new_data)
-            except KeyboardInterrupt:
-                return
-            except Exception:
-                new_data = []
-                print("Could not write to file", out_path)
-                traceback.print_exc()
-
-            last_out_path = out_path
-        if buf:
-            with last_out_path.open(mode="a") as out_file:
-                for fields in buf:
-                    out_file.write("\t".join(fields))
-                    out_file.write("\n")
-                buf = []
+        total_archive_files = len(namelist_to_outpath_mapping)
+        p_bar = tqdm(
+            desc=f"Extracting {zip_file_path}", total=total_archive_files, unit="files"
+        )
+        reading_batch_size = (
+            processes * chunksize * 4
+        )  # Reading the file on the main thread is blocking, so we try to read in batches
+        with Pool(processes=processes) as pool:
+            for out_path, names in outpath_to_namelist.items():
+                out_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(out_path, "w", encoding="utf-8") as f:
+                    for current_idx in range(0, len(names), reading_batch_size):
+                        batch = names[current_idx : current_idx + reading_batch_size]
+                        rmh_files = []
+                        for archive_path in batch:
+                            # We read the zipfile on the main thread.
+                            with archive.open(str(archive_path)) as item:
+                                text = item.read().decode("utf-8")
+                                rmh_files.append(rmhfile.RMHFile(text, archive_path))
+                        # Parse the xml
+                        for text in pool.map(
+                            extract_rmh_to_txt, rmh_files, chunksize=chunksize
+                        ):
+                            f.write(text)
+                            p_bar.update()
+                        rmh_files.clear()
+        p_bar.close()
 
 
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser("Extract RMH.zip file to tsv format")
+    parser = argparse.ArgumentParser("Extract RMH.zip file to txt format")
 
-    def file_type_guard(path):
+    def file_type_guard(path) -> Path:
         path = Path(path)
         if path.is_file():
             return path
-        raise ValueError(
-            "Expected path to a file but got '{0}'".format(path)
-        )
+        raise ValueError("Expected path to a file but got '{0}'".format(path))
 
     parser.add_argument(
         "-i",
@@ -159,7 +154,6 @@ if __name__ == "__main__":
         dest="in_path",
         type=file_type_guard,
         required=True,
-        default="default",
         help="Path to RMH zip file",
     )
     parser.add_argument(
@@ -169,22 +163,45 @@ if __name__ == "__main__":
         type=Path,
         required=False,
         default=DEFAULT_EXPORT_DIR,
-        help="Path to output file",
+        help="Path to base output directory",
     )
     parser.add_argument(
-        "--no-sports",
-        dest="sports",
-        action="store_true",
-        help="Ignore sports",
+        "--flatten-depth",
+        dest="flatten_depth",
+        type=int,
+        default=DEFAULT_FLATTEN_DEPTH,
+        help="The RMH file-tree structure is deep. \
+Instead of exporting all the files, we combine files which are deeper than the 'flatten_depth' into a single file. \
+0 will map each top-level directory in the zipfile to a single file. 1 will create a single directory per top-level directory in the zipfile, etc.",
+    )
+    parser.add_argument(
+        "--processes",
+        type=int,
+        default=20,
+        help="The number of processes to use when parsing XML for each output file.",
+    )
+    parser.add_argument(
+        "--chunksize",
+        type=int,
+        default=10,
+        help="The number of XML files to send to each process.",
     )
     parser.add_argument(
         "--no-meta",
         dest="no_meta",
         action="store_true",
-        help="Don't print file name, author, url and date in tsv"
+        help="Don't print file name, author, url and date in tsv",
     )
 
     args = parser.parse_args()
-    args.out_path.mkdir(exist_ok=True, parents=True)
+    logging.basicConfig(level=logging.INFO)
 
-    extract_all(in_path=args.in_path, out_path=args.out_path, include_sports=not args.sports, include_meta=not args.no_meta)
+    extract_all(
+        zip_file_path=args.in_path,
+        out_path=args.out_path,
+        flatten_depth=args.flatten_depth,
+        # TODO: Add support for ana.xml
+        accepted_suffixes=[".xml"],
+        processes=args.processes,
+        chunksize=args.chunksize,
+    )
