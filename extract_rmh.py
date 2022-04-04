@@ -29,10 +29,10 @@ from multiprocessing import Pool
 from pathlib import Path
 from typing import Dict, List
 
+from tokenizer import split_into_sentences
 from tqdm import tqdm
 
 import rmhfile
-from combine_text import split_sentences
 
 DEFAULT_EXPORT_DIR = Path("./extracted_rmh")
 DEFAULT_FLATTEN_DEPTH = 0
@@ -80,12 +80,14 @@ def extract_rmh_to_txt(
                         else x[
                             1:
                         ],  # Remove the space at the beginning of consecutive sentences
-                        split_sentences(paragraph),
+                        split_into_sentences(paragraph, original=True),
                     )
                 )
+                + sentence_separator
                 for paragraph in rmhf.paragraphs()
             ]
         )
+        + paragraph_separator
         + document_separator  # Add a document separator
     )
 
