@@ -22,12 +22,15 @@
 """
 
 
+import json
 import logging
+import uuid
 import zipfile
 from collections import defaultdict
+from functools import partial
 from multiprocessing import Pool
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from tokenizer import split_into_sentences
 from tqdm import tqdm
@@ -75,11 +78,9 @@ def extract_rmh_to_txt(
             [
                 sentence_separator.join(  # Join sentences into paragraphs again.
                     map(
-                        lambda x: x
-                        if x[0] != " "
-                        else x[
-                            1:
-                        ],  # Remove the space at the beginning of consecutive sentences
+                        lambda x: x.lstrip(
+                            " "
+                        ),  # Remove the space at the beginning of consecutive sentences
                         split_into_sentences(paragraph, original=True),
                     )
                 )
@@ -92,6 +93,35 @@ def extract_rmh_to_txt(
     )
 
 
+def extract_rmh_to_json_string(
+    rmhf: rmhfile.RMHFile, domains: Optional[List[str]]
+) -> str:
+    """Extract a single RMHFile to a json string"""
+    return (
+        json.dumps(
+            {
+                "uuid": str(uuid.uuid4()),
+                "lang": "is",
+                "document": [
+                    list(
+                        map(
+                            lambda x: x.lstrip(
+                                " "
+                            ),  # Remove the space at the beginning of consecutive sentences
+                            split_into_sentences(paragraph, original=True),
+                        )
+                    )
+                    for paragraph in rmhf.paragraphs()
+                ],
+                "domains": domains,
+                "title": rmhf.title,
+            },
+            ensure_ascii=False,
+        )
+        + "\n"
+    )
+
+
 def extract_all(
     zip_file_path: Path,
     out_path: Path,
@@ -99,12 +129,25 @@ def extract_all(
     accepted_suffixes: List[str],
     processes: int,
     chunksize: int,
+    to_jsonl: bool,
+    domains: Optional[List[str]],
 ) -> None:
+    """Extract all files from a zip file to a files."""
     # Please note that the zipfile module is not thread-safe even though it should be: https://bugs.python.org/issue42369
+    output_file_suffix = ".txt"
+    parsing_function = extract_rmh_to_txt
+    if to_jsonl:
+        output_file_suffix = ".jsonl"
+        parsing_function = partial(extract_rmh_to_json_string, domains=domains)
+
     with zipfile.ZipFile(str(zip_file_path)) as archive:
         archive_paths = [Path(x) for x in archive.namelist()]
         namelist_to_outpath_mapping = archive_path_to_outpath(
-            archive_paths, out_path, flatten_depth, accepted_suffixes
+            archive_paths,
+            out_path,
+            flatten_depth,
+            accepted_suffixes,
+            output_file_suffix=output_file_suffix,
         )
         outpath_to_namelist = defaultdict(list)
         for archive_path, outpath in namelist_to_outpath_mapping.items():
@@ -131,7 +174,7 @@ def extract_all(
                                 rmh_files.append(rmhfile.RMHFile(text, archive_path))
                         # Parse the xml
                         for text in pool.map(
-                            extract_rmh_to_txt, rmh_files, chunksize=chunksize
+                            parsing_function, rmh_files, chunksize=chunksize
                         ):
                             f.write(text)
                             p_bar.update()
@@ -168,7 +211,7 @@ if __name__ == "__main__":
         help="Path to base output directory",
     )
     parser.add_argument(
-        "--flatten-depth",
+        "--flatten_depth",
         dest="flatten_depth",
         type=int,
         default=DEFAULT_FLATTEN_DEPTH,
@@ -189,10 +232,17 @@ Instead of exporting all the files, we combine files which are deeper than the '
         help="The number of XML files to send to each process.",
     )
     parser.add_argument(
-        "--no-meta",
-        dest="no_meta",
+        "--to_jsonl",
         action="store_true",
-        help="Don't print file name, author, url and date in tsv",
+        default=False,
+        help="If true, the output files will be in jsonl format. Otherwise, they will be in txt format.",
+    )
+    parser.add_argument(
+        "--domains",
+        type=str,
+        nargs="+",
+        default=None,
+        help="When using jsonl format, the extracted files will be given these domains."
     )
 
     args = parser.parse_args()
@@ -206,4 +256,6 @@ Instead of exporting all the files, we combine files which are deeper than the '
         accepted_suffixes=[".xml"],
         processes=args.processes,
         chunksize=args.chunksize,
+        to_jsonl=args.to_jsonl,
+        domains=args.domains,
     )

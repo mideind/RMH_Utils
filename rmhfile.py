@@ -25,8 +25,8 @@ import logging
 import xml.etree.cElementTree as ET
 from collections import namedtuple
 from pathlib import Path
-from typing import List
-from xml.dom.minidom import Element
+from typing import List, Optional
+from xml.etree.ElementTree import Element
 
 log = logging.getLogger(__name__)
 
@@ -50,55 +50,80 @@ class RMHFile:
         self._title = None
         self._author = None
         self._date = None
+        self._id = None
 
     @property
-    def header(self):
+    def header(self) -> Element:
+        """Return the header element"""
         if self._header is not None:
             return self._header
-        self._header = self.root.find(".//tei:teiHeader", NS)
+        header = self.root.find(".//tei:teiHeader", NS)
+        if header is None:
+            raise ValueError(f"No header found in file: {self.path}")
+        self._header = header
         return self._header
 
     @property
-    def author(self):
+    def author(self) -> Optional[str]:
+        """Return the author element from the header"""
         if self._author is not None:
             return self._author
-        header = self.header
-        text = ""
-        if header is not None:
-            author_elem = header.find(".//tei:biblStruct/tei:analytic/tei:author", NS)
-            if author_elem is not None and author_elem.text is not None:
-                text = author_elem.text
-        self._author = text
+        author_elem = self.header.find(".//tei:biblStruct/tei:analytic/tei:author", NS)
+        if author_elem is not None:
+            self._author = author_elem.text
         return self._author
 
     @property
-    def date(self):
+    def date(self) -> Optional[str]:
+        """Return the date, if present, as string."""
         if self._date is not None:
             return self._date
-        header = self.header
-        text = ""
-        if header is not None:
-            date_elem = header.find(".//tei:biblStruct/tei:analytic/tei:date", NS)
-            if date_elem is not None:
-                text = date_elem.text
-        self._date = text
+        date_elem = self.header.find(".//tei:biblStruct/tei:analytic/tei:date", NS)
+        if date_elem is not None:
+            self._date = date_elem.text
         return self._date
 
     @property
-    def title(self):
+    def is_adjud(self) -> bool:
+        """Return True if this is an adjudication file"""
+        return self.id.startswith("IGC-Adjud")
+
+    @property
+    def is_social(self) -> bool:
+        """Return True if this is a social file"""
+        return self.id.startswith("IGC-Social")
+
+    @property
+    def is_news(self) -> bool:
+        """Return True if this is a news file"""
+        return self.id.startswith("IGC-News")
+
+    @property
+    def title(self) -> str:
+        """Return the title, if present, as string."""
         if self._title is not None:
             return self._title
-        header = self.header
-        text = ""
-        if header is not None:
-            title_elem = header.find(".//tei:biblStruct/tei:analytic/tei:title", NS)
-            if title_elem is not None:
-                return title_elem.text
-        self._title = text
+        if self.is_social or self.is_news:
+            title_elem = self.header.find(".//tei:biblStruct/tei:analytic/tei:title", NS)
+        else:
+            title_elem = self.header.find(".//tei:fileDesc/tei:titleStmt/tei:title[@type='sub']", NS)
+        if title_elem is None or title_elem.text is None:
+            raise ValueError(f"No title found in file: {self.path}")
+        self._title = title_elem.text
         return self._title
 
     @property
-    def idno(self):
+    def id(self) -> str:
+        """The id of the XML"""
+        id_elem = self.root.attrib.get("{http://www.w3.org/XML/1998/namespace}id")
+        if id_elem is None:
+            raise ValueError(f"No id found in file: {self.path}")
+        self._id = id_elem
+        return self._id
+
+    @property
+    def idno(self) -> Optional[str]:
+        """Return the idno, if present, as string."""
         if self._idno is not None:
             return self._idno
         idno_elem = self.root.find(".//tei:idno", NS)  # idno is in IGC-Adjud
@@ -110,6 +135,7 @@ class RMHFile:
         return self._idno
 
     def ref(self):
+        """Return the reference for this file"""
         if self.header is None:
             return None
         el = self.header.find(".//tei:biblScope/tei:ref", NS)
@@ -123,7 +149,7 @@ class RMHFile:
             pgs = list(self.root.iterfind(f".//tei:u/tei:seg", NS))
         if len(pgs) == 0:
             # normally tei:div/tei:p, but tei:u/tei:seg for IGC-Parla
-            log.warning(f"No paragraphs found in file: {self.path}")
+            raise ValueError(f"No paragraphs found in file: {self.path}")
         return pgs  # type: ignore
 
     def paragraphs(self) -> List[str]:
