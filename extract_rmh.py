@@ -50,19 +50,13 @@ def archive_path_to_outpath(
 ) -> Dict[Path, Path]:
     """Traverse the namelist and assign each element to an output file.
     If the depth of an element to more than the flatten_depth, it is aggregated to parent's output file."""
-    archive_paths = list(
-        filter(lambda x: accepted_suffixes == x.suffixes, archive_paths)
-    )
+    archive_paths = list(filter(lambda x: accepted_suffixes == x.suffixes, archive_paths))
     potential_namelist = [
         list(reversed(x.parents))[1:] + [x] for x in archive_paths
     ]  # Skip the "." and add the file itself
-    output_names = [
-        out_path / x[min(flatten_depth, len(x) - 1)] for x in potential_namelist
-    ]
+    output_names = [out_path / x[min(flatten_depth, len(x) - 1)] for x in potential_namelist]
     output_names_with_suffix = [x.with_suffix(output_file_suffix) for x in output_names]
-    namelist_mapping = {
-        archive_paths[i]: output_names_with_suffix[i] for i in range(len(archive_paths))
-    }
+    namelist_mapping = {archive_paths[i]: output_names_with_suffix[i] for i in range(len(archive_paths))}
     return namelist_mapping
 
 
@@ -78,9 +72,7 @@ def extract_rmh_to_txt(
             [
                 sentence_separator.join(  # Join sentences into paragraphs again.
                     map(
-                        lambda x: x.lstrip(
-                            " "
-                        ),  # Remove the space at the beginning of consecutive sentences
+                        lambda x: x.lstrip(" "),  # Remove the space at the beginning of consecutive sentences
                         split_into_sentences(paragraph, original=True),
                     )
                 )
@@ -93,9 +85,7 @@ def extract_rmh_to_txt(
     )
 
 
-def extract_rmh_to_json_string(
-    rmhf: rmhfile.RMHFile, domains: Optional[List[str]]
-) -> str:
+def extract_rmh_to_json_string(rmhf: rmhfile.RMHFile, domains: Optional[List[str]]) -> str:
     """Extract a single RMHFile to a json string"""
     return (
         json.dumps(
@@ -105,9 +95,7 @@ def extract_rmh_to_json_string(
                 "document": [
                     list(
                         map(
-                            lambda x: x.lstrip(
-                                " "
-                            ),  # Remove the space at the beginning of consecutive sentences
+                            lambda sentence: sentence.lstrip(" "),  # Remove the space at the beginning of consecutive sentences
                             split_into_sentences(paragraph, original=True),
                         )
                     )
@@ -154,9 +142,7 @@ def extract_all(
             outpath_to_namelist[outpath].append(archive_path)
 
         total_archive_files = len(namelist_to_outpath_mapping)
-        p_bar = tqdm(
-            desc=f"Extracting {zip_file_path}", total=total_archive_files, unit="files"
-        )
+        p_bar = tqdm(desc=f"Extracting {zip_file_path}", total=total_archive_files, unit="files")
         reading_batch_size = (
             processes * chunksize * 4
         )  # Reading the file on the main thread is blocking, so we try to read in batches
@@ -173,9 +159,7 @@ def extract_all(
                                 text = item.read().decode("utf-8")
                                 rmh_files.append(rmhfile.RMHFile(text, archive_path))
                         # Parse the xml
-                        for text in pool.map(
-                            parsing_function, rmh_files, chunksize=chunksize
-                        ):
+                        for text in pool.map(parsing_function, rmh_files, chunksize=chunksize):
                             f.write(text)
                             p_bar.update()
                         rmh_files.clear()
@@ -242,7 +226,7 @@ Instead of exporting all the files, we combine files which are deeper than the '
         type=str,
         nargs="+",
         default=None,
-        help="When using jsonl format, the extracted files will be given these domains."
+        help="When using jsonl format, the extracted files will be given these domains.",
     )
 
     args = parser.parse_args()
