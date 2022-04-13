@@ -1,6 +1,8 @@
 # RMH Utils
 A collection of scripts to help with extracting data from Risamálheild (RMH) / Icelandic Gigaword Corpus (IGC).
 
+Supports version 21.05 of the IGC.
+
 ## Extracting paragraphs
 To extract "raw text" from the IGC, you can use the following command:
 ```
