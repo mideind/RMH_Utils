@@ -41,20 +41,20 @@ DEFAULT_EXPORT_DIR = Path("./extracted_rmh")
 DEFAULT_FLATTEN_DEPTH = 0
 
 
-def archive_path_to_outpath(
+def archive_file_to_output_file(
     archive_paths: List[Path],
-    out_path: Path,
+    out_dir: Path,
     flatten_depth: int,
     accepted_suffixes: List[str],
     output_file_suffix=".txt",
 ) -> Dict[Path, Path]:
-    """Traverse the namelist and assign each element to an output file.
-    If the depth of an element to more than the flatten_depth, it is aggregated to parent's output file."""
+    """Traverse the archive's files and assign each file to an output file.
+    If the nested depth of a file to more than the flatten_depth, it is aggregated to parent's output file."""
     archive_paths = list(filter(lambda x: accepted_suffixes == x.suffixes, archive_paths))
     potential_namelist = [
         list(reversed(x.parents))[1:] + [x] for x in archive_paths
     ]  # Skip the "." and add the file itself
-    output_names = [out_path / x[min(flatten_depth, len(x) - 1)] for x in potential_namelist]
+    output_names = [out_dir / x[min(flatten_depth, len(x) - 1)] for x in potential_namelist]
     output_names_with_suffix = [x.with_suffix(output_file_suffix) for x in output_names]
     namelist_mapping = {archive_paths[i]: output_names_with_suffix[i] for i in range(len(archive_paths))}
     return namelist_mapping
@@ -112,7 +112,7 @@ def extract_rmh_to_json_string(rmhf: rmhfile.RMHFile, domains: Optional[List[str
 
 def extract_all(
     zip_file_path: Path,
-    out_path: Path,
+    output_file: Path,
     flatten_depth: int,
     accepted_suffixes: List[str],
     processes: int,
@@ -130,34 +130,34 @@ def extract_all(
 
     with zipfile.ZipFile(str(zip_file_path)) as archive:
         archive_paths = [Path(x) for x in archive.namelist()]
-        namelist_to_outpath_mapping = archive_path_to_outpath(
+        archive_file_to_output_file_map = archive_file_to_output_file(
             archive_paths,
-            out_path,
+            output_file,
             flatten_depth,
             accepted_suffixes,
             output_file_suffix=output_file_suffix,
         )
-        outpath_to_namelist = defaultdict(list)
-        for archive_path, outpath in namelist_to_outpath_mapping.items():
-            outpath_to_namelist[outpath].append(archive_path)
+        output_file_to_archive_files_map = defaultdict(list)
+        for archive_file, output_file in archive_file_to_output_file_map.items():
+            output_file_to_archive_files_map[output_file].append(archive_file)
 
-        total_archive_files = len(namelist_to_outpath_mapping)
+        total_archive_files = len(archive_file_to_output_file_map)
         p_bar = tqdm(desc=f"Extracting {zip_file_path}", total=total_archive_files, unit="files")
         reading_batch_size = (
             processes * chunksize * 4
         )  # Reading the file on the main thread is blocking, so we try to read in batches
         with Pool(processes=processes) as pool:
-            for out_path, names in outpath_to_namelist.items():
-                out_path.parent.mkdir(parents=True, exist_ok=True)
-                with open(out_path, "w", encoding="utf-8") as f:
-                    for current_idx in range(0, len(names), reading_batch_size):
-                        batch = names[current_idx : current_idx + reading_batch_size]
+            for output_file, archive_files in output_file_to_archive_files_map.items():
+                output_file.parent.mkdir(parents=True, exist_ok=True)
+                with open(output_file, "w", encoding="utf-8") as f:
+                    for current_idx in range(0, len(archive_files), reading_batch_size):
+                        batch = archive_files[current_idx : current_idx + reading_batch_size]
                         rmh_files = []
-                        for archive_path in batch:
+                        for archive_file in batch:
                             # We read the zipfile on the main thread.
-                            with archive.open(str(archive_path)) as item:
+                            with archive.open(str(archive_file)) as item:
                                 text = item.read().decode("utf-8")
-                                rmh_files.append(rmhfile.RMHFile(text, archive_path))
+                                rmh_files.append(rmhfile.RMHFile(text, archive_file))
                         # Parse the xml
                         for text in pool.map(parsing_function, rmh_files, chunksize=chunksize):
                             f.write(text)
@@ -187,8 +187,8 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "-o",
-        "--out_path",
-        dest="out_path",
+        "--out_dir",
+        dest="out_dir",
         type=Path,
         required=False,
         default=DEFAULT_EXPORT_DIR,
@@ -199,9 +199,10 @@ if __name__ == "__main__":
         dest="flatten_depth",
         type=int,
         default=DEFAULT_FLATTEN_DEPTH,
-        help="The RMH file-tree structure is deep. \
-Instead of exporting all the files, we combine files which are deeper than the 'flatten_depth' into a single file. \
-0 will map each top-level directory in the zipfile to a single file. 1 will create a single directory per top-level directory in the zipfile, etc.",
+        help="The RMH contains deeply nested folder. "
+             "Instead of exporting all the files, we combine files which are within folders deeper than the 'flatten_depth' into a single file. "
+             "0 will map each top-level directory in the zipfile file. "
+             "1 will preserve the top-level directory in the zipfile, etc.",
     )
     parser.add_argument(
         "--processes",
@@ -226,7 +227,8 @@ Instead of exporting all the files, we combine files which are deeper than the '
         type=str,
         nargs="+",
         default=None,
-        help="When using jsonl format, the extracted files will be given these domains.",
+        help="When using jsonl format, the extracted files will be given these domains. "
+             "Usage: --domains domain1 domain2 domain3",
     )
 
     args = parser.parse_args()
@@ -234,7 +236,7 @@ Instead of exporting all the files, we combine files which are deeper than the '
 
     extract_all(
         zip_file_path=args.in_path,
-        out_path=args.out_path,
+        output_file=args.out_dir,
         flatten_depth=args.flatten_depth,
         # TODO: Add support for ana.xml
         accepted_suffixes=[".xml"],
