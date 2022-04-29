@@ -21,163 +21,132 @@
      Wrapper class for an xml resource file, as part of the RMH corpus.
 """
 
-
+import logging
 import xml.etree.cElementTree as ET
 from collections import namedtuple
 from pathlib import Path
-import urllib.parse as urlparse
+from typing import Iterable, List, Optional
+from xml.etree.ElementTree import Element
 
+log = logging.getLogger(__name__)
 
 URI = "http://www.tei-c.org/ns/1.0"
 TEI = "{" + URI + "}"
 NS = {"tei": URI}
 ET.register_namespace("", URI)
 
-Sentence = namedtuple("Sentence", "index tokens")
-Token = namedtuple("Token", "text, lemma, tag")
+RMHSentence = namedtuple("RMHSentence", "index tokens")
+RMHToken = namedtuple("RMHToken", "text lemma tag id")
 
 
 class RMHFile:
     """An xml file that is part of the RMH corpus"""
 
-    def __init__(self, path):
-        self.path = path if isinstance(path, Path) else Path(path)
-        self._root = None
-        self._header = None
-        self._source_desc = None
-        self._idno = None
-        self._title = None 
-        self._author = None
-        self._date = None
-
-    @classmethod
-    def fromstring(cls, data):
-        inst = cls("")
-        inst._root = ET.fromstring(data)
-        if inst.idno is None:
-            return None
-        inst.path = Path(inst.idno)
-        inst.tsv_fname = inst.path.with_suffix(".tsv")
-        inst.desc_fname = inst.path.with_suffix(".desc.xml")
-        return inst
+    def __init__(self, data: str, path: Path):
+        self.path = path
+        self.root = ET.fromstring(data)
 
     @property
-    def root(self):
-        if self._root is not None:
-            return self._root
-        tree = ET.parse(self.path)
-        self._root = tree.getroot()
-        return self._root
+    def header(self) -> Element:
+        """Return the header element"""
+        header = self.root.find(".//tei:teiHeader", NS)
+        if header is None:
+            raise ValueError(f"No header found in file: {self.path}")
+        return header
 
     @property
-    def header(self):
-        if self._header is not None:
-            return self._header
-        self._header = self.root.find(".//tei:teiHeader", NS)
-        return self._header
+    def author(self) -> Optional[str]:
+        """Return the author text, if present."""
+        author_elem = self.header.find(".//tei:biblStruct/tei:analytic/tei:author", NS)
+        if author_elem is not None:
+            return author_elem.text
+        return None
 
     @property
-    def author(self):
-        if self._author is not None:
-            return self._author
-        header = self.header
-        text = ""
-        if header is not None:
-            author_elem = header.find(".//tei:biblStruct/tei:analytic/tei:author", NS)
-            if author_elem is not None and author_elem.text is not None:
-                text = author_elem.text
-        self._author = text
-        return self._author
+    def date(self) -> Optional[str]:
+        """Return the date string, if present."""
+        date_elem = self.header.find(".//tei:biblStruct/tei:analytic/tei:date", NS)
+        if date_elem is not None:
+            return date_elem.text
+        return None
 
     @property
-    def date(self):
-        if self._date is not None:
-            return self._date
-        header = self.header
-        text = ""
-        if header is not None:
-            date_elem = header.find(".//tei:biblStruct/tei:analytic/tei:date", NS)
-            if date_elem is not None:
-               text = date_elem.text
-        self._date = text
-        return self._date
+    def title(self) -> str:
+        """Return the title string, if present."""
+        if self.is_social or self.is_news:
+            title_elem = self.header.find(".//tei:biblStruct/tei:analytic/tei:title", NS)
+        else:
+            title_elem = self.header.find(".//tei:fileDesc/tei:titleStmt/tei:title[@type='sub']", NS)
+        if title_elem is None or title_elem.text is None:
+            raise ValueError(f"No title found in file: {self.path}")
+        return title_elem.text
 
     @property
-    def title(self):
-        if self._title is not None:
-            return self._title
-        header = self.header
-        text = ""
-        if header is not None:
-            title_elem = header.find(".//tei:biblStruct/tei:analytic/tei:title/tei:title", NS)
-            if title_elem is not None:
-                return title_elem.text
-        self._title = text
-        return self._title
+    def id(self) -> str:
+        """The id of the XML"""
+        id_elem = self.root.attrib.get("{http://www.w3.org/XML/1998/namespace}id")
+        if id_elem is None:
+            raise ValueError(f"No id found in file: {self.path}")
+        return id_elem
 
     @property
-    def idno(self):
-        if self._idno is not None:
-            return self._idno
-        idno_elem = self.root.find(".//tei:idno", NS)
-        if idno_elem is None:
-            return None
-        self._idno = idno_elem.text
-        return self._idno
+    def idno(self) -> Optional[str]:
+        """Return the idno as string, if present."""
+        idno_elem = self.root.find(".//tei:idno", NS)  # idno is in IGC-Adjud
+        if idno_elem is not None:
+            return idno_elem.text
+        return self.root.attrib.get("{http://www.w3.org/XML/1998/namespace}id")
 
     @property
-    def paragraphs(self):
-        for pg in self.root.iterfind(f".//tei:div1/tei:p", NS):
-            yield pg
+    def is_adjud(self) -> bool:
+        """Return True if this is an adjudication file"""
+        return self.id.startswith("IGC-Adjud")
 
     @property
+    def is_social(self) -> bool:
+        """Return True if this is a social file"""
+        return self.id.startswith("IGC-Social")
+
+    @property
+    def is_news(self) -> bool:
+        """Return True if this is a news file"""
+        return self.id.startswith("IGC-News")
+
     def ref(self):
-        if self.header is None:
-            return None
+        """Return the reference for this file"""
         el = self.header.find(".//tei:biblScope/tei:ref", NS)
         if el is not None:
             return el.text
         return None
 
-    @property
-    def is_sports(self):
-        if self.ref is None:
-            return None
-        res = urlparse.urlparse(self.ref)
-        prefix = "/sport"
-        infix = "/pepsi-deild/"
-        items = self.header.iter(".//tei:keyWords/tei:list/tei:item")  # rmh2018/433/12/G-39-5740489
-        found = any("Fótbolti" in item.text for item in items)
-        return res.path.startswith(prefix) or infix in res.path or found
+    def _paragraphs(self) -> List[Element]:
+        pgs = list(self.root.iterfind(".//tei:div/tei:p", NS))
+        if len(pgs) == 0:
+            pgs = list(self.root.iterfind(".//tei:u/tei:seg", NS))
+        if len(pgs) == 0:
+            # normally tei:div/tei:p, but tei:u/tei:seg for IGC-Parla
+            raise ValueError(f"No paragraphs found in file: {self.path}")
+        return pgs  # type: ignore
 
-    def __fspath__(self):
-        return str(self.path)
+    def paragraphs(self) -> List[str]:
+        """for now just collecting paragraphs from the TEI untokenized format"""
+        return [pg.text for pg in self._paragraphs() if pg.text is not None]
 
-    def is_on_disk(self, directory):
-        tsv_path = (Path(directory) / self.idno).with_suffix(".tsv")
-        desc_path = (Path(directory) / self.idno).with_suffix(".desc.xml")
-        if tsv_path.is_file() and desc_path.is_file():
-            return True
-        return False
-
-    @property
-    def sentences(self):
+    def sentences(self) -> Iterable[RMHSentence]:
+        """Return all the sentences in this file."""
         idno = self.idno
-        for pg in self.paragraphs:
+        for pg in self._paragraphs():
             pg_idx = pg.attrib.get("n")
             for sentence in pg.iterfind("tei:s", NS):
                 sent_idx = sentence.attrib.get("n")
                 tokens = []
                 for item in sentence:
-                    token = Token(
+                    token = RMHToken(
                         item.text,
                         item.attrib.get("lemma", item.text),
-                        item.attrib.get("type", item.text),
+                        item.attrib.get("pos", item.text),
+                        item.attrib.get("xml:id", item.text),
                     )
                     tokens.append(token)
                 sent_id = f"{idno}.{pg_idx}.{sent_idx}"
-                yield Sentence(sent_id, tokens)
-
-    def indexed_sentence_text(self):
-        for sentence in self.sentences:
-            yield sentence.index, " ".join([token.text for token in sentence.tokens])
+                yield RMHSentence(sent_id, tokens)
