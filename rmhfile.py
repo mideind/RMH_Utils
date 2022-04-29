@@ -35,8 +35,8 @@ TEI = "{" + URI + "}"
 NS = {"tei": URI}
 ET.register_namespace("", URI)
 
-RMHSentence = namedtuple("Sentence", "index tokens")
-RMHToken = namedtuple("Token", "text lemma tag id")
+RMHSentence = namedtuple("RMHSentence", "index tokens")
+RMHToken = namedtuple("RMHToken", "text lemma tag id")
 
 
 class RMHFile:
@@ -88,7 +88,7 @@ class RMHFile:
         if id_elem is None:
             raise ValueError(f"No id found in file: {self.path}")
         return id_elem
-    
+
     @property
     def idno(self) -> Optional[str]:
         """Return the idno as string, if present."""
@@ -111,7 +111,6 @@ class RMHFile:
     def is_news(self) -> bool:
         """Return True if this is a news file"""
         return self.id.startswith("IGC-News")
-
 
     def ref(self):
         """Return the reference for this file"""
