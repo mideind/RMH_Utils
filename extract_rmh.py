@@ -30,12 +30,14 @@ from collections import defaultdict
 from functools import partial
 from multiprocessing import Pool
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Callable
 
 from tokenizer import split_into_sentences
 from tqdm import tqdm
 
 import rmhfile
+import metadata_igc2022
+import handle_name_placeholders
 
 DEFAULT_EXPORT_DIR = Path("./extracted_rmh")
 DEFAULT_FLATTEN_DEPTH = 0
@@ -60,49 +62,77 @@ def archive_file_to_output_file(
     return namelist_mapping
 
 
+def lookup_known_ordering(rmhf: rmhfile.RMHFile):
+    path = Path(rmhf.path)
+    return metadata_igc2022.lookup_ordering(path)
+
+
+def lookup_known_domains(rmhf: rmhfile.RMHFile):
+    path = Path(rmhf.path)
+    return metadata_igc2022.lookup_domains(path)
+
+
+def extract_doc_structure(rmhf: rmhfile.RMHFile, sentence_modifiers: List[Callable[[str], str]] = []) -> List[List[str]]:
+    """ Returns the document as a list of paragraphs. Each paragraph is a list of sentences. """
+    sentence_modifiers.insert(0,
+        lambda sent: sent.lstrip(" ")  # Remove the space at the beginning of consecutive sentences
+    )
+    def modify_sentence(sent):
+        for m in sentence_modifiers:
+            sent = m(sent)
+        return sent
+
+    return [
+        list(
+            map(
+                modify_sentence,
+                split_into_sentences(paragraph, original=True),
+            )
+        )
+        for paragraph in rmhf.paragraphs()
+    ]
+
+
 def extract_rmh_to_txt(
     rmhf: rmhfile.RMHFile,
     sentence_separator="\n",
     document_separator="\n",
     paragraph_separator="\n",
+    sentence_modifiers: List[Callable[[str], str]]=[],
 ) -> str:
     """Extract a single RMHFile to a text file"""
-    return (
-        paragraph_separator.join(  # Join paragraphs
-            [
-                sentence_separator.join(  # Join sentences into paragraphs again.
-                    map(
-                        lambda x: x.lstrip(" "),  # Remove the space at the beginning of consecutive sentences
-                        split_into_sentences(paragraph, original=True),
-                    )
-                )
-                + sentence_separator
-                for paragraph in rmhf.paragraphs()
-            ]
-        )
-        + paragraph_separator
-        + document_separator  # Add a document separator
-    )
+    doc = extract_doc_structure(rmhf, sentence_modifiers)
+
+    paragraphs = [sentence_separator.join(sents) for sents in doc]
+    doc_str = paragraph_separator.join(paragraphs) + paragraph_separator + document_separator
+
+    return doc_str
 
 
-def extract_rmh_to_json_string(rmhf: rmhfile.RMHFile, domains: Optional[List[str]]) -> str:
+def extract_rmh_to_json_string(
+    rmhf: rmhfile.RMHFile,
+    domains: Optional[List[str]],
+    ordering: Optional[str],
+    sentence_modifiers: List[Callable[[str], str]]=[],
+) -> str:
     """Extract a single RMHFile to a json string"""
+    if ordering == "lookup":
+        ordering = lookup_known_ordering(rmhf)
+    if domains is not None and "lookup" in domains:
+        domains.remove("lookup")
+        domains.extend(lookup_known_domains(rmhf))
+
+    doc = extract_doc_structure(rmhf, sentence_modifiers)
+
     return (
         json.dumps(
             {
                 "uuid": str(uuid.uuid4()),
                 "lang": "is",
-                "document": [
-                    list(
-                        map(
-                            lambda sentence: sentence.lstrip(" "),  # Remove the space at the beginning of consecutive sentences
-                            split_into_sentences(paragraph, original=True),
-                        )
-                    )
-                    for paragraph in rmhf.paragraphs()
-                ],
+                "document": doc,
                 "domains": domains,
                 "title": rmhf.title,
+                "ordering": ordering,
             },
             ensure_ascii=False,
         )
@@ -119,14 +149,22 @@ def extract_all(
     chunksize: int,
     to_jsonl: bool,
     domains: Optional[List[str]],
+    ordering: Optional[str],
+    replace_name_placeholders: bool,
 ) -> None:
     """Extract all files from a zip file to a files."""
     # Please note that the zipfile module is not thread-safe even though it should be: https://bugs.python.org/issue42369
+
+    sentence_modifiers = []
+    if replace_name_placeholders:
+        sentence_modifiers.append(handle_name_placeholders.replace_name_placeholders)
+
     output_file_suffix = ".txt"
-    parsing_function = extract_rmh_to_txt
+    parsing_function = partial(extract_rmh_to_txt, sentence_modifiers=sentence_modifiers)
+
     if to_jsonl:
         output_file_suffix = ".jsonl"
-        parsing_function = partial(extract_rmh_to_json_string, domains=domains)
+        parsing_function = partial(extract_rmh_to_json_string, domains=domains, ordering=ordering, sentence_modifiers=sentence_modifiers)
 
     with zipfile.ZipFile(str(zip_file_path)) as archive:
         archive_paths = [Path(x) for x in archive.namelist()]
@@ -228,7 +266,29 @@ if __name__ == "__main__":
         nargs="+",
         default=None,
         help="When using jsonl format, the extracted files will be given these domains. "
-             "Usage: --domains domain1 domain2 domain3",
+             "Usage: --domains domain1 domain2 domain3\n"
+             "If 'lookup' is one of the domains, domains will be added from the known-domains list."
+             "Currently, domains are known for the IGC-2022 corpus.",
+    )
+    parser.add_argument(
+        "--ordering",
+        type=str,
+        default=None,
+        help="When using jsonl format, add info about whether the document is ordered or not. "
+             "If the value is 'lookup', attempt to look up the in_path in the known ordering list. "
+             "  Currently, the ordering of IGC-2022 subcorpora is known.\n"
+             "  If attempting to extract these, the value will be one of \n"
+             "    'ordered': The document is in order\n"
+             "    'shuffled': The document's paragraphs have been shuffled\n"
+             "    'chunk-shuffled-500': The document has been shuffled in chunks of 500-ish words. See IGC-Books\n"
+             "If the value is anything other than 'lookup', the value will be set in the document order field.",
+    )
+    parser.add_argument(
+        "--replace_name_placeholders",
+        action="store_true",
+        default=False,
+        help="Some subcorpora (adjud in rmh-2022) have been partially anonymized by replacing person names with placeholders. "
+            "This option replaces these placeholders with random names chosen from a list of common names.",
     )
 
     args = parser.parse_args()
@@ -244,4 +304,6 @@ if __name__ == "__main__":
         chunksize=args.chunksize,
         to_jsonl=args.to_jsonl,
         domains=args.domains,
+        ordering=args.ordering,
+        replace_name_placeholders=args.replace_name_placeholders,
     )
